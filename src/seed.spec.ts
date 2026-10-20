@@ -1,9 +1,9 @@
 import { DataSource } from 'typeorm';
 import { describe, expect, it, vi } from 'vitest';
 import { Account } from './accounts/account.entity.js';
-import { resetDatabase } from './seed.js';
+import { LOAD_ACCOUNT_BALANCE, resetDatabase } from './seed.js';
 
-function setup() {
+function setup(loadAccounts?: number) {
   const manager = { query: vi.fn(), save: vi.fn() };
   const dataSource = {
     entityMetadatas: [{ tableName: 'accounts' }, { tableName: 'transfers' }],
@@ -12,7 +12,8 @@ function setup() {
   return {
     manager,
     dataSource,
-    reset: () => resetDatabase(dataSource as unknown as DataSource),
+    reset: () =>
+      resetDatabase(dataSource as unknown as DataSource, loadAccounts),
   };
 }
 
@@ -39,6 +40,25 @@ describe('resetDatabase', () => {
 
     expect(manager.query.mock.invocationCallOrder[0]).toBeLessThan(
       manager.save.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('does not create load accounts by default', async () => {
+    const { reset, manager } = setup();
+
+    await reset();
+
+    expect(manager.query).toHaveBeenCalledTimes(1);
+  });
+
+  it('creates the requested number of load accounts', async () => {
+    const { reset, manager } = setup(10_000);
+
+    await reset();
+
+    expect(manager.query).toHaveBeenLastCalledWith(
+      expect.stringContaining('generate_series(1, $1)'),
+      [10_000, LOAD_ACCOUNT_BALANCE],
     );
   });
 });

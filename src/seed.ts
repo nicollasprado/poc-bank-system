@@ -1,7 +1,9 @@
 import { DataSource } from 'typeorm';
 import { Account } from './accounts/account.entity.js';
 
-export async function resetDatabase(dataSource: DataSource) {
+export const LOAD_ACCOUNT_BALANCE = 1_000_000;
+
+export async function resetDatabase(dataSource: DataSource, loadAccounts = 0) {
   const tables = dataSource.entityMetadatas
     .map((metadata) => `"${metadata.tableName}"`)
     .join(', ');
@@ -22,5 +24,14 @@ export async function resetDatabase(dataSource: DataSource) {
         balance: 50_000,
       },
     ]);
+    if (loadAccounts > 0) {
+      await manager.query(
+        `INSERT INTO "accounts" ("id", "name", "email", "balance")
+         SELECT ('00000000-0000-4000-8000-' || lpad(i::text, 12, '0'))::uuid,
+                'Load ' || i, 'load' || i || '@example.com', $2
+         FROM generate_series(1, $1) AS i`,
+        [loadAccounts, LOAD_ACCOUNT_BALANCE],
+      );
+    }
   });
 }
