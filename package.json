@@ -21,7 +21,9 @@
     "migration:generate": "npm run build && node --env-file-if-exists=.env ./node_modules/typeorm/cli.js migration:generate -d dist/database/data-source.js",
     "migration:run": "npm run build && node --env-file-if-exists=.env ./node_modules/typeorm/cli.js migration:run -d dist/database/data-source.js",
     "migration:revert": "npm run build && node --env-file-if-exists=.env ./node_modules/typeorm/cli.js migration:revert -d dist/database/data-source.js",
-    "test:integration": "vitest run --project integration"
+    "test:integration": "vitest run --project integration",
+    "test:load": "docker run --rm -i --network host -e BASE_URL -e RATE -e ACCOUNTS -v ./load:/load:ro grafana/k6:2.3.0 run /load/transfer.js",
+    "seed:load": "nest start --entryFile seed.command -- --load-accounts=10000"
   },
   "dependencies": {
     "@nestjs/common": "^12.0.1",

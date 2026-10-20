@@ -80,6 +80,18 @@ npm run test:integration   # integração: API inteira + Postgres real (precisa 
 
 Os de integração sobem um Postgres descartável com Testcontainers, aplicam as migrations e não tocam no banco de dev.
 
+### Teste de carga (k6)
+
+Com a API rodando (`npm run build && npm run start:prod`) e o banco seedado com as contas de carga:
+
+```bash
+npm run seed:load                                   # Alice, Bob e 10 mil contas com R$ 10.000 cada
+npm run test:load                                   # k6 via Docker, sem instalar nada
+RATE=200 BASE_URL=http://outro-host:3000/api npm run test:load
+```
+
+`load/transfer.js` dispara `RATE` transferências/s (padrão 1000) entre pares aleatórios das `ACCOUNTS` contas de carga (padrão 10000) durante 1 min. O resumo mostra p90, p95 e p99. Só falha por dois motivos: a API não sustentar `RATE` requisições/s (tolerância de 1%) ou o p99 passar de 300 ms. Rode `npm run seed` depois para voltar ao banco de demo.
+
 ## Postman
 
 Importe `postman/poc-bank-system.postman_collection.json` no Postman (*Import*). URL base e IDs das contas já vêm como variáveis da coleção. Rode `npm run seed` antes e use o *Run collection* para executar tudo em ordem, com verificações em cada requisição.

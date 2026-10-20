@@ -1,6 +1,7 @@
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { createInterface } from 'node:readline/promises';
+import { parseArgs } from 'node:util';
 import { DataSource } from 'typeorm';
 import { AppModule } from './app.module.js';
 import { EnvironmentVariables } from './config/env.validation.js';
@@ -14,6 +15,11 @@ async function confirm(question: string) {
 }
 
 async function seed() {
+  const { values } = parseArgs({
+    options: { 'load-accounts': { type: 'string', default: '0' } },
+  });
+  const loadAccounts = Number(values['load-accounts']);
+
   const app = await NestFactory.createApplicationContext(AppModule, {
     logger: ['error', 'warn'],
   });
@@ -25,8 +31,12 @@ async function seed() {
     `This will DELETE ALL DATA in database "${db.pathname.slice(1)}" at ${db.host} and create the demo accounts. Continue? (y/N) `,
   );
   if (confirmed) {
-    await resetDatabase(app.get(DataSource));
-    console.log('Done: database cleaned, Alice and Bob created.');
+    await resetDatabase(app.get(DataSource), loadAccounts);
+    console.log(
+      loadAccounts > 0
+        ? `Done: database cleaned, Alice, Bob and ${loadAccounts} load accounts created.`
+        : 'Done: database cleaned, Alice and Bob created.',
+    );
   } else {
     console.log('Aborted, nothing was changed.');
   }
