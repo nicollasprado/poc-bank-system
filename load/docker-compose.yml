@@ -1,0 +1,65 @@
+name: poc-bank-load
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: bank
+      POSTGRES_PASSWORD: bank
+      POSTGRES_DB: bank
+    healthcheck:
+      test: ['CMD', 'pg_isready', '-U', 'bank']
+      interval: 1s
+      retries: 30
+
+  redis:
+    image: redis:8-alpine
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 1s
+      retries: 30
+
+  mailpit:
+    image: axllent/mailpit:v1.27
+
+  api:
+    build: ..
+    environment:
+      PORT: 3000
+      DATABASE_URL: postgres://bank:bank@postgres:5432/bank
+      REDIS_URL: redis://redis:6379
+      SMTP_HOST: mailpit
+      SMTP_PORT: 1025
+      MAIL_FROM: POC Bank <no-reply@poc-bank.local>
+    command: >-
+      sh -c "node node_modules/typeorm/cli.js migration:run -d dist/database/data-source.js
+      && node dist/seed.command --yes --load-accounts=${ACCOUNTS:-10000}
+      && node dist/main"
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          "wget -qO- --header 'x-account-id: 11111111-1111-4111-8111-111111111111' http://localhost:3000/api/balance",
+        ]
+      interval: 2s
+      retries: 60
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+
+  k6:
+    image: grafana/k6:2.3.0
+    command: run /load/transfer.js
+    environment:
+      BASE_URL: http://api:3000/api
+      RATE: ${RATE:-1000}
+      ACCOUNTS: ${ACCOUNTS:-10000}
+    volumes:
+      - ./transfer.js:/load/transfer.js:ro
+    depends_on:
+      api:
+        condition: service_healthy

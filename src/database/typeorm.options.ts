@@ -11,5 +11,6 @@ export function typeOrmOptions(databaseUrl: string): DataSourceOptions {
     migrations: [CreateAccountsAndTransfers1792449030088],
     uuidExtension: 'pgcrypto',
     parseInt8: true,
+    extra: { max: 33 },
   };
 }

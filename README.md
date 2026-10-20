@@ -82,15 +82,16 @@ Os de integração sobem um Postgres descartável com Testcontainers, aplicam as
 
 ### Teste de carga (k6)
 
-Com a API rodando (`npm run build && npm run start:prod`) e o banco seedado com as contas de carga:
+Só precisa do Docker rodando:
 
 ```bash
-npm run seed:load                                   # Alice, Bob e 10 mil contas com R$ 10.000 cada
-npm run test:load                                   # k6 via Docker, sem instalar nada
-RATE=200 BASE_URL=http://outro-host:3000/api npm run test:load
+npm run test:load
+env RATE=200 ACCOUNTS=1000 npm run test:load
 ```
 
-`load/transfer.js` dispara `RATE` transferências/s (padrão 1000) entre pares aleatórios das `ACCOUNTS` contas de carga (padrão 10000) durante 1 min. O resumo mostra p90, p95 e p99. Só falha por dois motivos: a API não sustentar `RATE` requisições/s (tolerância de 1%) ou o p99 passar de 300 ms. Rode `npm run seed` depois para voltar ao banco de demo.
+Sobe um ambiente descartável e separado do de dev (`load/docker-compose.yml`): Postgres, Redis, Mailpit e a API buildada pelo `Dockerfile`. A API roda as migrations, cria Alice, Bob e `ACCOUNTS` contas de carga (padrão 10000, com R$ 10.000 cada) e, quando responde, o k6 dispara `RATE` transferências/s (padrão 1000) entre pares aleatórios durante 1 min. No fim tudo é derrubado, inclusive os volumes.
+
+O resumo mostra p90, p95 e p99. Só falha por dois motivos: a API não sustentar `RATE` requisições/s (tolerância de 1%) ou o p99 passar de 300 ms. O p99 mede até o `202` do POST, não o processamento pelo worker. Para isso, 2 transferências/s são rastreadas até o `job.status` sair de `pending`: `transfer_completion_time` mostra quanto o dinheiro demora para chegar e `transfer_completion_timeouts` conta as que não terminaram em 110 s (só informativas, não reprovam).
 
 ## Postman
 
