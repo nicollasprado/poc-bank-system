@@ -87,9 +87,12 @@ Só precisa do Docker rodando:
 ```bash
 npm run test:load
 env RATE=200 ACCOUNTS=1000 npm run test:load
+env API_REPLICAS=1 npm run test:load
 ```
 
-Sobe um ambiente descartável e separado do de dev (`load/docker-compose.yml`): Postgres, Redis, Mailpit e a API buildada pelo `Dockerfile`. A API roda as migrations, cria Alice, Bob e `ACCOUNTS` contas de carga (padrão 10000, com R$ 10.000 cada) e, quando responde, o k6 dispara `RATE` transferências/s (padrão 1000) entre pares aleatórios durante 1 min. No fim tudo é derrubado, inclusive os volumes.
+Sobe um ambiente descartável e separado do de dev (`load/docker-compose.yml`): Postgres, Redis, Mailpit, `API_REPLICAS` réplicas da API buildada pelo `Dockerfile` (padrão 3) e um nginx na frente distribuindo as requisições entre elas (round-robin, `load/nginx.conf`). Antes das réplicas subirem, um container `setup` roda as migrations e cria Alice, Bob e `ACCOUNTS` contas de carga (padrão 10000, com R$ 10.000 cada). Quando o nginx responde, o k6 dispara `RATE` transferências/s (padrão 1000) entre pares aleatórios durante 1 min. No fim tudo é derrubado, inclusive os volumes.
+
+Cada réplica abre até 33 conexões com o Postgres, por isso o `max_connections` dele sobe para 200 nesse ambiente. Para comparar escala horizontal, rode com `API_REPLICAS=1` e depois com `3`: o tráfego passa pelo nginx nos dois casos, então só o número de réplicas muda.
 
 O resumo mostra p90, p95 e p99. Só falha por dois motivos: a API não sustentar `RATE` requisições/s (tolerância de 1%) ou o p99 passar de 300 ms. O p99 mede até o `202` do POST, não o processamento pelo worker. Para isso, 2 transferências/s são rastreadas até o `job.status` sair de `pending`: `transfer_completion_time` mostra quanto o dinheiro demora para chegar e `transfer_completion_timeouts` conta as que não terminaram em 110 s (só informativas, não reprovam).
 

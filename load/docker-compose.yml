@@ -1,8 +1,19 @@
 name: poc-bank-load
 
+x-api: &api
+  build: ..
+  environment:
+    PORT: 3000
+    DATABASE_URL: postgres://bank:bank@postgres:5432/bank
+    REDIS_URL: redis://redis:6379
+    SMTP_HOST: mailpit
+    SMTP_PORT: 1025
+    MAIL_FROM: POC Bank <no-reply@poc-bank.local>
+
 services:
   postgres:
     image: postgres:18-alpine
+    command: postgres -c max_connections=200
     environment:
       POSTGRES_USER: bank
       POSTGRES_PASSWORD: bank
@@ -22,19 +33,19 @@ services:
   mailpit:
     image: axllent/mailpit:v1.27
 
-  api:
-    build: ..
-    environment:
-      PORT: 3000
-      DATABASE_URL: postgres://bank:bank@postgres:5432/bank
-      REDIS_URL: redis://redis:6379
-      SMTP_HOST: mailpit
-      SMTP_PORT: 1025
-      MAIL_FROM: POC Bank <no-reply@poc-bank.local>
+  setup:
+    <<: *api
     command: >-
       sh -c "node node_modules/typeorm/cli.js migration:run -d dist/database/data-source.js
-      && node dist/seed.command --yes --load-accounts=${ACCOUNTS:-10000}
-      && node dist/main"
+      && node dist/seed.command --yes --load-accounts=${ACCOUNTS:-10000}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: *api
+    deploy:
+      replicas: ${API_REPLICAS:-3}
     healthcheck:
       test:
         [
@@ -44,22 +55,38 @@ services:
       interval: 2s
       retries: 60
     depends_on:
-      postgres:
-        condition: service_healthy
+      setup:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       mailpit:
         condition: service_started
 
+  nginx:
+    image: nginx:1.29-alpine
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          "wget -qO- --header 'x-account-id: 11111111-1111-4111-8111-111111111111' http://127.0.0.1/api/balance",
+        ]
+      interval: 1s
+      retries: 30
+    depends_on:
+      api:
+        condition: service_healthy
+
   k6:
     image: grafana/k6:2.3.0
     command: run /load/transfer.js
     environment:
-      BASE_URL: http://api:3000/api
+      BASE_URL: http://nginx/api
       RATE: ${RATE:-1000}
       ACCOUNTS: ${ACCOUNTS:-10000}
     volumes:
       - ./transfer.js:/load/transfer.js:ro
     depends_on:
-      api:
+      nginx:
         condition: service_healthy
