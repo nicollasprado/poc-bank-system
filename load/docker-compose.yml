@@ -98,6 +98,7 @@ services:
       BASE_URL: http://nginx/api
       RATE: ${RATE:-1000}
       ACCOUNTS: ${ACCOUNTS:-10000}
+      WARMUP_SECONDS: ${WARMUP_SECONDS:-0}
     volumes:
       - ./transfer.js:/load/transfer.js:ro
     depends_on:

@@ -94,11 +94,15 @@ npm run test:load
 env RATE=200 ACCOUNTS=1000 npm run test:load
 env API_REPLICAS=1 npm run test:load
 env WORKER_REPLICAS=2 npm run test:load
+npm run test:load:warm                     # aquece 15 s antes de medir
+env WARMUP_SECONDS=30 npm run test:load:warm
 ```
 
 Sobe um ambiente descartável e separado do de dev (`load/docker-compose.yml`): Postgres, Redis, Mailpit, `API_REPLICAS` réplicas da API buildada pelo `Dockerfile` (padrão 3), um nginx na frente distribuindo as requisições entre elas (round-robin, `load/nginx.conf`) e `WORKER_REPLICAS` workers de email (padrão 1, mesma imagem rodando `dist/main.worker`), todos consumindo a mesma fila no Redis. Antes das réplicas subirem, um container `setup` roda as migrations e cria Alice, Bob e `ACCOUNTS` contas de carga (padrão 10000, com R$ 10.000 cada). Quando o nginx responde, o k6 dispara `RATE` transferências/s (padrão 1000) entre pares aleatórios durante 1 min. No fim tudo é derrubado, inclusive os volumes.
 
 Cada réplica da API e cada worker abre até 33 conexões com o Postgres, por isso o `max_connections` dele sobe para 200 nesse ambiente (dá para até 6 processos no total). Para comparar escala horizontal, rode com `API_REPLICAS=1` e depois com `3`: o tráfego passa pelo nginx nos dois casos, então só o número de réplicas muda.
+
+O `test:load` mede desde o primeiro segundo, com tudo frio: o Node ainda compilando o código, os pools de conexão vazios e o k6 criando VUs. É o que uma réplica nova sente num deploy ou num autoscaling. O `test:load:warm` antes sobe a taxa de 50/s até `RATE` ao longo de `WARMUP_SECONDS` (padrão 15) e só então começa a medir, então mostra o sistema em regime estável. As requisições do aquecimento não contam nas metas. Comparar os dois diz quanto da latência vem do início frio.
 
 O resumo mostra p90, p95 e p99. Só falha por dois motivos: a API não sustentar `RATE` requisições/s (tolerância de 1%) ou o p99 passar de 300 ms. O p99 mede até o `202` do POST, não o processamento pelo worker. Para isso, 2 transferências/s são rastreadas até o `job.status` sair de `pending`: `transfer_completion_time` mostra quanto o dinheiro demora para chegar e `transfer_completion_timeouts` conta as que não terminaram em 110 s (só informativas, não reprovam).
 

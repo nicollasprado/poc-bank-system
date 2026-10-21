@@ -6,16 +6,29 @@ const BASE_URL = __ENV.BASE_URL || 'http://localhost:3000/api';
 const RATE = Number(__ENV.RATE || 1000);
 const ACCOUNTS = Number(__ENV.ACCOUNTS || 10000);
 const DURATION_SECONDS = 60;
+const WARMUP_SECONDS = Number(__ENV.WARMUP_SECONDS || 0);
 const COMPLETION_TIMEOUT_SECONDS = 110;
 
 const completionTime = new Trend('transfer_completion_time', true);
 const completionTimeouts = new Counter('transfer_completion_timeouts');
 
+const warmup = {
+  executor: 'ramping-arrival-rate',
+  exec: 'transfer',
+  startRate: Math.min(50, RATE),
+  timeUnit: '1s',
+  stages: [{ target: RATE, duration: `${WARMUP_SECONDS}s` }],
+  preAllocatedVUs: 200,
+  maxVUs: 2000,
+};
+
 export const options = {
   scenarios: {
+    ...(WARMUP_SECONDS > 0 && { warmup }),
     transfers: {
       executor: 'constant-arrival-rate',
       exec: 'transfer',
+      startTime: `${WARMUP_SECONDS}s`,
       rate: RATE,
       timeUnit: '1s',
       duration: `${DURATION_SECONDS}s`,
@@ -25,6 +38,7 @@ export const options = {
     completion: {
       executor: 'constant-arrival-rate',
       exec: 'completion',
+      startTime: `${WARMUP_SECONDS}s`,
       rate: 2,
       timeUnit: '1s',
       duration: `${DURATION_SECONDS}s`,
