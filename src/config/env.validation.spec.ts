@@ -4,6 +4,7 @@ import { validateEnv } from './env.validation.js';
 const validEnv = {
   PORT: '3000',
   DATABASE_URL: 'postgres://bank:bank@localhost:5433/bank',
+  REDIS_URL: 'redis://localhost:6380',
   SMTP_HOST: 'localhost',
   SMTP_PORT: '1025',
   MAIL_FROM: 'POC Bank <no-reply@pocbank.dev>',
@@ -31,6 +32,8 @@ describe('validateEnv', () => {
   it.each([
     ['DATABASE_URL is missing', { DATABASE_URL: undefined }],
     ['DATABASE_URL is not a postgres url', { DATABASE_URL: 'mysql://db/bank' }],
+    ['REDIS_URL is missing', { REDIS_URL: undefined }],
+    ['REDIS_URL is not a redis url', { REDIS_URL: 'http://localhost:6380' }],
     ['PORT is not a number', { PORT: 'abc' }],
     ['SMTP_PORT is out of range', { SMTP_PORT: '70000' }],
     ['SMTP_HOST is empty', { SMTP_HOST: '' }],

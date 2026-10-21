@@ -40,35 +40,41 @@ export class TransferService {
       throw new UnprocessableEntityException('Insufficient funds');
     }
 
-    const transfer = await this.dataSource.transaction(async (manager) => {
-      const debit = async () => {
-        const { affected } = await manager.decrement(
-          Account,
-          { id: fromAccountId, balance: MoreThanOrEqual(amount) },
-          'balance',
-          amount,
-        );
-        if (!affected) {
-          throw new UnprocessableEntityException('Insufficient funds');
+    const { transfer, emailIds } = await this.dataSource.transaction(
+      async (manager) => {
+        const debit = async () => {
+          const { affected } = await manager.decrement(
+            Account,
+            { id: fromAccountId, balance: MoreThanOrEqual(amount) },
+            'balance',
+            amount,
+          );
+          if (!affected) {
+            throw new UnprocessableEntityException('Insufficient funds');
+          }
+        };
+        const credit = () =>
+          manager.increment(Account, { id: toAccountId }, 'balance', amount);
+
+        if (fromAccountId < toAccountId) {
+          await debit();
+          await credit();
+        } else {
+          await credit();
+          await debit();
         }
-      };
-      const credit = () =>
-        manager.increment(Account, { id: toAccountId }, 'balance', amount);
 
-      if (fromAccountId < toAccountId) {
-        await debit();
-        await credit();
-      } else {
-        await credit();
-        await debit();
-      }
+        const saved = await manager.save(
+          manager.create(Transfer, { fromAccountId, toAccountId, amount }),
+        );
+        return {
+          transfer: saved,
+          emailIds: await this.mail.notifyTransfer(manager, saved, from, to),
+        };
+      },
+    );
 
-      return manager.save(
-        manager.create(Transfer, { fromAccountId, toAccountId, amount }),
-      );
-    });
-
-    this.mail.notifyTransfer(transfer, from, to);
+    await this.mail.enqueue(emailIds);
 
     return transfer;
   }

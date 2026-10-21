@@ -12,6 +12,12 @@ import {
 } from 'vitest';
 import { AppModule } from '../src/app.module.js';
 import { configureApp } from '../src/app.setup.js';
+import { getQueueToken } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
+import { Email } from '../src/mail/email.entity.js';
+import { EmailProcessor } from '../src/mail/email.processor.js';
+import { EMAIL_QUEUE } from '../src/mail/email.queue.js';
+import { MailService } from '../src/mail/mail.service.js';
 import { MAIL_TRANSPORTER } from '../src/mail/mail.transporter.js';
 import { resetDatabase } from '../src/seed.js';
 import { Transfer } from '../src/transfers/transfer.entity.js';
@@ -23,6 +29,7 @@ const stranger = '33333333-3333-4333-8333-333333333333';
 const transporter = { sendMail: vi.fn().mockResolvedValue({}) };
 let app: INestApplication;
 let dataSource: DataSource;
+let emailQueue: Queue;
 let baseUrl: string;
 
 beforeAll(async () => {
@@ -36,9 +43,18 @@ beforeAll(async () => {
   await app.listen(0, '127.0.0.1');
   baseUrl = `${await app.getUrl()}/api`;
   dataSource = app.get(DataSource);
+  emailQueue = app.get(getQueueToken(EMAIL_QUEUE));
+  await app.get(EmailProcessor).start();
 });
 
 beforeEach(async () => {
+  await vi.waitFor(
+    async () => {
+      const jobs = await emailQueue.getJobs(['active', 'waiting', 'delayed']);
+      expect(jobs.filter((job) => job.name === 'send')).toEqual([]);
+    },
+    { timeout: 10_000 },
+  );
   await resetDatabase(dataSource);
   transporter.sendMail.mockClear();
 });
@@ -75,6 +91,10 @@ async function balanceOf(account: string): Promise<number> {
 
 function countTransfers() {
   return dataSource.getRepository(Transfer).count();
+}
+
+function emails() {
+  return dataSource.getRepository(Email).find({ order: { recipient: 'ASC' } });
 }
 
 describe('GET /api/balance', () => {
@@ -120,7 +140,9 @@ describe('POST /api/transfer', () => {
   it('emails the sender and the recipient', async () => {
     await transfer(alice, bob, 15_000);
 
-    expect(transporter.sendMail).toHaveBeenCalledTimes(2);
+    await vi.waitFor(() =>
+      expect(transporter.sendMail).toHaveBeenCalledTimes(2),
+    );
     expect(transporter.sendMail).toHaveBeenCalledWith(
       expect.objectContaining({
         from: 'POC Bank <no-reply@test>',
@@ -134,6 +156,62 @@ describe('POST /api/transfer', () => {
         subject: 'Transferência recebida',
       }),
     );
+    await vi.waitFor(async () =>
+      expect(await emails()).toEqual([
+        expect.objectContaining({
+          recipient: 'alice@example.com',
+          status: 'sent',
+        }),
+        expect.objectContaining({
+          recipient: 'bob@example.com',
+          status: 'sent',
+        }),
+      ]),
+    );
+  });
+
+  it('retries an email that failed to send', async () => {
+    transporter.sendMail.mockRejectedValueOnce(new Error('SMTP down'));
+
+    await transfer(alice, bob, 15_000);
+
+    await vi.waitFor(
+      async () => {
+        expect(transporter.sendMail).toHaveBeenCalledTimes(3);
+        expect((await emails()).map((e) => e.status)).toEqual(['sent', 'sent']);
+      },
+      { timeout: 5_000 },
+    );
+  });
+
+  it('sends an email only once even if it is queued twice', async () => {
+    await transfer(alice, bob, 15_000);
+    const ids = (await emails()).map((e) => e.id);
+
+    await app.get(MailService).enqueue(ids);
+
+    await vi.waitFor(async () =>
+      expect((await emails()).map((e) => e.status)).toEqual(['sent', 'sent']),
+    );
+    expect(transporter.sendMail).toHaveBeenCalledTimes(2);
+  });
+
+  it('sweeps pending emails whose job was lost', async () => {
+    await dataSource.query(
+      `INSERT INTO "emails" ("recipient", "subject", "text", "created_at")
+       VALUES ('alice@example.com', 'Assunto', 'Texto', now() - interval '1 minute')`,
+    );
+
+    await app.get(EmailProcessor).sweep();
+
+    await vi.waitFor(async () =>
+      expect(await emails()).toEqual([
+        expect.objectContaining({ status: 'sent' }),
+      ]),
+    );
+    expect(transporter.sendMail).toHaveBeenCalledWith(
+      expect.objectContaining({ to: 'alice@example.com', subject: 'Assunto' }),
+    );
   });
 
   it('returns 422 and changes nothing when the balance is not enough', async () => {
@@ -143,7 +221,7 @@ describe('POST /api/transfer', () => {
     expect(await balanceOf(alice)).toBe(100_000);
     expect(await balanceOf(bob)).toBe(50_000);
     expect(await countTransfers()).toBe(0);
-    expect(transporter.sendMail).not.toHaveBeenCalled();
+    expect(await emails()).toEqual([]);
   });
 
   it('returns 400 for an invalid body', async () => {

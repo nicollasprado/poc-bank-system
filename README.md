@@ -1,12 +1,12 @@
 # poc-bank-system
 
-POC de um sistema bancário para estudo de system design. NestJS + TypeORM + Postgres, com notificação por email.
+POC de um sistema bancário para estudo de system design. NestJS + TypeORM + Postgres, com notificação por email enviada por uma fila (BullMQ + Redis).
 
 ## Rodando
 
 ```bash
 cp .env.example .env
-docker compose up -d   # Postgres (porta 5433) + Mailpit (SMTP fake)
+docker compose up -d   # Postgres (porta 5433) + Redis (porta 6380) + Mailpit (SMTP fake)
 npm install
 npm run migration:run  # cria as tabelas
 npm run seed           # apaga TODOS os dados e cria as contas de teste (pede confirmação)
@@ -54,6 +54,10 @@ curl localhost:3000/api/balance -H 'x-account-id: 11111111-1111-4111-8111-111111
 ## Decisões
 
 - **Dinheiro em centavos (`bigint`):** evita erro de arredondamento de ponto flutuante.
+- **Emails por fila, com outbox:** a transferência grava os dois emails na tabela `emails` com status `pending` na mesma transação, então só existe email de transferência que aconteceu. Depois do commit, cada email vira um job na fila `emails` (BullMQ/Redis) e a resposta HTTP não espera o envio. O worker roda em cada réplica da API, envia e marca `sent`.
+  - **Retry:** um envio que falha é tentado de novo até 5 vezes, com backoff exponencial (1s, 2s, 4s, 8s). Depois disso o email fica `failed`.
+  - **Varredura:** se o processo morrer entre o commit e o enfileiramento, ou o Redis estiver fora do ar, o email fica `pending` sem job. A cada 1 min uma varredura (agendada uma vez só no Redis, mesmo com várias réplicas) enfileira os `pending` com mais de 30 s.
+  - **Sem duplicata na fila:** o id do job é o id do email, então enfileirar o mesmo email duas vezes não cria dois jobs, e o worker ignora email que já não está `pending`. Ainda assim a entrega é *at-least-once*: se o processo morrer depois de enviar e antes de marcar `sent`, o email sai de novo.
 
 ## Migrations
 

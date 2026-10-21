@@ -42,7 +42,10 @@ function setup() {
     ),
   };
   const transfers = { findOne: vi.fn() };
-  const mail = { notifyTransfer: vi.fn() };
+  const mail = {
+    notifyTransfer: vi.fn().mockResolvedValue(['email-1', 'email-2']),
+    enqueue: vi.fn().mockResolvedValue(undefined),
+  };
 
   const service = new TransferService(
     dataSource as unknown as DataSource,
@@ -89,15 +92,24 @@ describe('TransferService', () => {
       });
     });
 
-    it('notifies both accounts about the saved transfer', async () => {
-      const { service, mail } = setup();
+    it('saves the emails inside the transaction and queues them after it', async () => {
+      const { service, manager, dataSource, mail } = setup();
 
       const transfer = await service.create(alice.id, {
         toAccountId: bob.id,
         amount: 3_000,
       });
 
-      expect(mail.notifyTransfer).toHaveBeenCalledWith(transfer, alice, bob);
+      expect(mail.notifyTransfer).toHaveBeenCalledWith(
+        manager,
+        transfer,
+        alice,
+        bob,
+      );
+      expect(mail.enqueue).toHaveBeenCalledWith(['email-1', 'email-2']);
+      expect(mail.enqueue.mock.invocationCallOrder[0]).toBeGreaterThan(
+        dataSource.transaction.mock.invocationCallOrder[0],
+      );
     });
 
     it('debits before crediting when the sender has the lower id', async () => {
@@ -165,6 +177,7 @@ describe('TransferService', () => {
       ).rejects.toThrow(UnprocessableEntityException);
       expect(manager.save).not.toHaveBeenCalled();
       expect(mail.notifyTransfer).not.toHaveBeenCalled();
+      expect(mail.enqueue).not.toHaveBeenCalled();
     });
   });
 

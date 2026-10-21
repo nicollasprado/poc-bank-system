@@ -1,10 +1,13 @@
 import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { Queue } from 'bullmq';
 import type { Transporter } from 'nodemailer';
+import { EntityManager } from 'typeorm';
 import { describe, expect, it, vi } from 'vitest';
 import { Account } from '../accounts/account.entity.js';
 import { EnvironmentVariables } from '../config/env.validation.js';
 import { Transfer } from '../transfers/transfer.entity.js';
+import { Email } from './email.entity.js';
 import { MailService } from './mail.service.js';
 
 const alice: Account = {
@@ -30,54 +33,106 @@ const transfer: Transfer = {
 function setup() {
   const transporter = { sendMail: vi.fn().mockResolvedValue({}) };
   const config = { get: vi.fn().mockReturnValue('POC Bank <no-reply@test>') };
+  const queue = { addBulk: vi.fn().mockResolvedValue([]) };
+  const manager = {
+    insert: vi.fn().mockResolvedValue({
+      identifiers: [{ id: 'email-1' }, { id: 'email-2' }],
+    }),
+  };
   const mail = new MailService(
     transporter as unknown as Transporter,
     config as unknown as ConfigService<EnvironmentVariables, true>,
+    queue as unknown as Queue,
   );
-  return { mail, transporter, config };
+  return { mail, transporter, config, queue, manager };
 }
 
 describe('MailService', () => {
-  it('emails the sender and the recipient with the amount in reais', () => {
-    const { mail, transporter } = setup();
+  describe('notifyTransfer', () => {
+    it('saves an email for the sender and the recipient with the amount in reais', async () => {
+      const { mail, manager } = setup();
 
-    mail.notifyTransfer(transfer, alice, bob);
+      const ids = await mail.notifyTransfer(
+        manager as unknown as EntityManager,
+        transfer,
+        alice,
+        bob,
+      );
 
-    expect(transporter.sendMail).toHaveBeenCalledTimes(2);
-    expect(transporter.sendMail).toHaveBeenCalledWith({
-      from: 'POC Bank <no-reply@test>',
-      to: 'alice@example.com',
-      subject: 'Transferência enviada',
-      text: expect.stringMatching(/Você enviou R\$\s150,00 para Bob/),
-    });
-    expect(transporter.sendMail).toHaveBeenCalledWith({
-      from: 'POC Bank <no-reply@test>',
-      to: 'bob@example.com',
-      subject: 'Transferência recebida',
-      text: expect.stringMatching(/Você recebeu R\$\s150,00 de Alice/),
+      expect(ids).toEqual(['email-1', 'email-2']);
+      expect(manager.insert).toHaveBeenCalledWith(Email, [
+        {
+          recipient: 'alice@example.com',
+          subject: 'Transferência enviada',
+          text: expect.stringMatching(/Você enviou R\$\s150,00 para Bob/),
+        },
+        {
+          recipient: 'bob@example.com',
+          subject: 'Transferência recebida',
+          text: expect.stringMatching(/Você recebeu R\$\s150,00 de Alice/),
+        },
+      ]);
     });
   });
 
-  it('reads the sender address from the config', () => {
-    const { mail, config } = setup();
+  describe('enqueue', () => {
+    it('queues one job per email, using the email id as the job id', async () => {
+      const { mail, queue } = setup();
 
-    mail.notifyTransfer(transfer, alice, bob);
+      await mail.enqueue(['email-1', 'email-2']);
 
-    expect(config.get).toHaveBeenCalledWith('MAIL_FROM', { infer: true });
+      expect(queue.addBulk).toHaveBeenCalledWith([
+        {
+          name: 'send',
+          data: { emailId: 'email-1' },
+          opts: { jobId: 'email-1' },
+        },
+        {
+          name: 'send',
+          data: { emailId: 'email-2' },
+          opts: { jobId: 'email-2' },
+        },
+      ]);
+    });
+
+    it('logs instead of throwing when the queue is down', async () => {
+      const { mail, queue } = setup();
+      queue.addBulk.mockRejectedValue(new Error('Redis down'));
+      const logError = vi
+        .spyOn(Logger.prototype, 'error')
+        .mockImplementation(() => {});
+
+      await expect(mail.enqueue(['email-1'])).resolves.toBeUndefined();
+      expect(logError).toHaveBeenCalledWith(expect.stringContaining('email-1'));
+    });
   });
 
-  it('logs instead of throwing when an email fails', async () => {
-    const { mail, transporter } = setup();
-    transporter.sendMail.mockRejectedValue(new Error('SMTP down'));
-    const logError = vi
-      .spyOn(Logger.prototype, 'error')
-      .mockImplementation(() => {});
+  describe('send', () => {
+    it('sends the email from the configured address', async () => {
+      const { mail, transporter, config } = setup();
 
-    expect(() => mail.notifyTransfer(transfer, alice, bob)).not.toThrow();
+      await mail.send({
+        recipient: 'alice@example.com',
+        subject: 'Assunto',
+        text: 'Texto',
+      } as Email);
 
-    await vi.waitFor(() => expect(logError).toHaveBeenCalledTimes(2));
-    expect(logError).toHaveBeenCalledWith(
-      expect.stringContaining('alice@example.com'),
-    );
+      expect(config.get).toHaveBeenCalledWith('MAIL_FROM', { infer: true });
+      expect(transporter.sendMail).toHaveBeenCalledWith({
+        from: 'POC Bank <no-reply@test>',
+        to: 'alice@example.com',
+        subject: 'Assunto',
+        text: 'Texto',
+      });
+    });
+
+    it('throws when the SMTP server fails, so the job is retried', async () => {
+      const { mail, transporter } = setup();
+      transporter.sendMail.mockRejectedValue(new Error('SMTP down'));
+
+      await expect(
+        mail.send({ recipient: 'alice@example.com' } as Email),
+      ).rejects.toThrow('SMTP down');
+    });
   });
 });
