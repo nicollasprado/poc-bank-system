@@ -61,6 +61,17 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
+
+  worker:
+    <<: *api
+    command: node dist/main.worker
+    deploy:
+      replicas: ${WORKER_REPLICAS:-1}
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
       mailpit:
         condition: service_started
 

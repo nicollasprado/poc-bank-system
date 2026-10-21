@@ -1,6 +1,9 @@
+import { ConfigService } from '@nestjs/config';
 import { Job, Queue } from 'bullmq';
+import type { Transporter } from 'nodemailer';
 import { Repository } from 'typeorm';
 import { describe, expect, it, vi } from 'vitest';
+import { EnvironmentVariables } from '../config/env.validation.js';
 import { Email } from './email.entity.js';
 import { EmailProcessor } from './email.processor.js';
 import { SendEmailJobData } from './email.queue.js';
@@ -20,17 +23,18 @@ function setup() {
     find: vi.fn().mockResolvedValue([]),
     update: vi.fn().mockResolvedValue({ affected: 1 }),
   };
-  const mail = {
-    send: vi.fn().mockResolvedValue(undefined),
-    enqueue: vi.fn().mockResolvedValue(undefined),
-  };
+  const mail = { enqueue: vi.fn().mockResolvedValue(undefined) };
   const queue = { upsertJobScheduler: vi.fn() };
+  const transporter = { sendMail: vi.fn().mockResolvedValue({}) };
+  const config = { get: vi.fn().mockReturnValue('POC Bank <no-reply@test>') };
   const processor = new EmailProcessor(
     emails as unknown as Repository<Email>,
     mail as unknown as MailService,
     queue as unknown as Queue,
+    transporter as unknown as Transporter,
+    config as unknown as ConfigService<EnvironmentVariables, true>,
   );
-  return { processor, emails, mail, queue };
+  return { processor, emails, mail, queue, transporter, config };
 }
 
 function job(overrides: Partial<Job<SendEmailJobData>> = {}) {
@@ -45,8 +49,8 @@ function job(overrides: Partial<Job<SendEmailJobData>> = {}) {
 
 describe('EmailProcessor', () => {
   describe('process', () => {
-    it('sends a pending email and marks it as sent', async () => {
-      const { processor, emails, mail } = setup();
+    it('sends a pending email from the configured address and marks it as sent', async () => {
+      const { processor, emails, transporter, config } = setup();
 
       await processor.process(job());
 
@@ -54,7 +58,13 @@ describe('EmailProcessor', () => {
         id: 'email-1',
         status: 'pending',
       });
-      expect(mail.send).toHaveBeenCalledWith(email);
+      expect(config.get).toHaveBeenCalledWith('MAIL_FROM', { infer: true });
+      expect(transporter.sendMail).toHaveBeenCalledWith({
+        from: 'POC Bank <no-reply@test>',
+        to: 'alice@example.com',
+        subject: 'Transferência enviada',
+        text: 'Você enviou R$ 150,00 para Bob.',
+      });
       expect(emails.update).toHaveBeenCalledWith(
         { id: 'email-1', status: 'pending' },
         { status: 'sent', processedAt: expect.any(Date) },
@@ -62,30 +72,30 @@ describe('EmailProcessor', () => {
     });
 
     it('skips an email that is no longer pending, e.g. a duplicate job', async () => {
-      const { processor, emails, mail } = setup();
+      const { processor, emails, transporter } = setup();
       emails.findOneBy.mockResolvedValue(null);
 
       await processor.process(job());
 
-      expect(mail.send).not.toHaveBeenCalled();
+      expect(transporter.sendMail).not.toHaveBeenCalled();
       expect(emails.update).not.toHaveBeenCalled();
     });
 
     it('rethrows when sending fails so BullMQ retries it', async () => {
-      const { processor, emails, mail } = setup();
-      mail.send.mockRejectedValue(new Error('SMTP down'));
+      const { processor, emails, transporter } = setup();
+      transporter.sendMail.mockRejectedValue(new Error('SMTP down'));
 
       await expect(processor.process(job())).rejects.toThrow('SMTP down');
       expect(emails.update).not.toHaveBeenCalled();
     });
 
     it('runs the sweep for the scheduled sweep job', async () => {
-      const { processor, emails, mail } = setup();
+      const { processor, emails, transporter } = setup();
 
       await processor.process(job({ name: 'sweep' }));
 
       expect(emails.find).toHaveBeenCalled();
-      expect(mail.send).not.toHaveBeenCalled();
+      expect(transporter.sendMail).not.toHaveBeenCalled();
     });
   });
 
@@ -142,18 +152,15 @@ describe('EmailProcessor', () => {
     });
   });
 
-  it('schedules the sweep when started', async () => {
+  it('schedules the sweep when the worker boots', async () => {
     const { processor, queue } = setup();
-    const run = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(processor, 'worker', { value: { run } });
 
-    await processor.start();
+    await processor.onApplicationBootstrap();
 
     expect(queue.upsertJobScheduler).toHaveBeenCalledWith(
       'sweep',
       { every: 60_000 },
       { name: 'sweep', opts: { attempts: 1 } },
     );
-    expect(run).toHaveBeenCalled();
   });
 });

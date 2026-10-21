@@ -23,7 +23,10 @@
     "migration:revert": "npm run build && node --env-file-if-exists=.env ./node_modules/typeorm/cli.js migration:revert -d dist/database/data-source.js",
     "test:integration": "vitest run --project integration",
     "test:load": "docker compose -f load/docker-compose.yml up --build --attach k6 --exit-code-from k6; code=$?; docker compose -f load/docker-compose.yml down -v; exit $code",
-    "seed:load": "nest start --entryFile seed.command -- --load-accounts=10000"
+    "seed:load": "nest start --entryFile seed.command -- --load-accounts=10000",
+    "start:worker": "nest start --entryFile main.worker",
+    "start:worker:dev": "nest start --watch --entryFile main.worker",
+    "start:worker:prod": "node dist/main.worker"
   },
   "dependencies": {
     "@nestjs/bullmq": "^12.0.0",

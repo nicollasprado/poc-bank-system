@@ -4,9 +4,13 @@ import {
   Processor,
   WorkerHost,
 } from '@nestjs/bullmq';
+import { Inject, OnApplicationBootstrap } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Job, Queue } from 'bullmq';
+import type { Transporter } from 'nodemailer';
 import { Raw, Repository } from 'typeorm';
+import { EnvironmentVariables } from '../config/env.validation.js';
 import { Email } from './email.entity.js';
 import {
   EMAIL_QUEUE,
@@ -14,30 +18,35 @@ import {
   SWEEP_EMAILS_JOB,
 } from './email.queue.js';
 import { MailService } from './mail.service.js';
+import { MAIL_TRANSPORTER } from './mail.transporter.js';
 
 const SWEEP_EVERY_MS = 60_000;
 const SWEEP_OLDER_THAN = '30 seconds';
 const SWEEP_BATCH_SIZE = 1_000;
 
-@Processor(EMAIL_QUEUE, { concurrency: 10, autorun: false })
-export class EmailProcessor extends WorkerHost {
+@Processor(EMAIL_QUEUE, { concurrency: 10 })
+export class EmailProcessor
+  extends WorkerHost
+  implements OnApplicationBootstrap
+{
   constructor(
     @InjectRepository(Email)
     private readonly emails: Repository<Email>,
     private readonly mail: MailService,
     @InjectQueue(EMAIL_QUEUE)
     private readonly queue: Queue,
+    @Inject(MAIL_TRANSPORTER) private readonly transporter: Transporter,
+    private readonly config: ConfigService<EnvironmentVariables, true>,
   ) {
     super();
   }
 
-  async start() {
+  async onApplicationBootstrap() {
     await this.queue.upsertJobScheduler(
       SWEEP_EMAILS_JOB,
       { every: SWEEP_EVERY_MS },
       { name: SWEEP_EMAILS_JOB, opts: { attempts: 1 } },
     );
-    void this.worker.run();
   }
 
   async process(job: Job<SendEmailJobData>) {
@@ -49,7 +58,12 @@ export class EmailProcessor extends WorkerHost {
     });
     if (!email) return;
 
-    await this.mail.send(email);
+    await this.transporter.sendMail({
+      from: this.config.get('MAIL_FROM', { infer: true }),
+      to: email.recipient,
+      subject: email.subject,
+      text: email.text,
+    });
     await this.emails.update(
       { id: email.id, status: 'pending' },
       { status: 'sent', processedAt: new Date() },

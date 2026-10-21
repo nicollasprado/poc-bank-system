@@ -11,6 +11,7 @@ npm install
 npm run migration:run  # cria as tabelas
 npm run seed           # apaga TODOS os dados e cria as contas de teste (pede confirmação)
 npm run start:dev      # API em http://localhost:3000/api
+npm run start:worker:dev   # em outro terminal: worker que envia os emails
 ```
 
 O `npm run seed` limpa o banco e cria duas contas de teste:
@@ -54,7 +55,7 @@ curl localhost:3000/api/balance -H 'x-account-id: 11111111-1111-4111-8111-111111
 ## Decisões
 
 - **Dinheiro em centavos (`bigint`):** evita erro de arredondamento de ponto flutuante.
-- **Emails por fila, com outbox:** a transferência grava os dois emails na tabela `emails` com status `pending` na mesma transação, então só existe email de transferência que aconteceu. Depois do commit, cada email vira um job na fila `emails` (BullMQ/Redis) e a resposta HTTP não espera o envio. O worker roda em cada réplica da API, envia e marca `sent`.
+- **Emails por fila, com outbox:** a transferência grava os dois emails na tabela `emails` com status `pending` na mesma transação, então só existe email de transferência que aconteceu. Depois do commit, cada email vira um job na fila `emails` (BullMQ/Redis) e a resposta HTTP não espera o envio. Um serviço separado, o worker (`src/main.worker.ts`), consome a fila, envia e marca `sent`. A API não envia email, então pico de envio ou SMTP lento não disputam CPU com as requisições, e API e worker escalam cada um no seu ritmo. Sem worker rodando, os emails só ficam `pending` esperando.
   - **Retry:** um envio que falha é tentado de novo até 5 vezes, com backoff exponencial (1s, 2s, 4s, 8s). Depois disso o email fica `failed`.
   - **Varredura:** se o processo morrer entre o commit e o enfileiramento, ou o Redis estiver fora do ar, o email fica `pending` sem job. A cada 1 min uma varredura (agendada uma vez só no Redis, mesmo com várias réplicas) enfileira os `pending` com mais de 30 s.
   - **Sem duplicata na fila:** o id do job é o id do email, então enfileirar o mesmo email duas vezes não cria dois jobs, e o worker ignora email que já não está `pending`. Ainda assim a entrega é *at-least-once*: se o processo morrer depois de enviar e antes de marcar `sent`, o email sai de novo.
@@ -92,11 +93,12 @@ Só precisa do Docker rodando:
 npm run test:load
 env RATE=200 ACCOUNTS=1000 npm run test:load
 env API_REPLICAS=1 npm run test:load
+env WORKER_REPLICAS=2 npm run test:load
 ```
 
-Sobe um ambiente descartável e separado do de dev (`load/docker-compose.yml`): Postgres, Redis, Mailpit, `API_REPLICAS` réplicas da API buildada pelo `Dockerfile` (padrão 3) e um nginx na frente distribuindo as requisições entre elas (round-robin, `load/nginx.conf`). Antes das réplicas subirem, um container `setup` roda as migrations e cria Alice, Bob e `ACCOUNTS` contas de carga (padrão 10000, com R$ 10.000 cada). Quando o nginx responde, o k6 dispara `RATE` transferências/s (padrão 1000) entre pares aleatórios durante 1 min. No fim tudo é derrubado, inclusive os volumes.
+Sobe um ambiente descartável e separado do de dev (`load/docker-compose.yml`): Postgres, Redis, Mailpit, `API_REPLICAS` réplicas da API buildada pelo `Dockerfile` (padrão 3), um nginx na frente distribuindo as requisições entre elas (round-robin, `load/nginx.conf`) e `WORKER_REPLICAS` workers de email (padrão 1, mesma imagem rodando `dist/main.worker`), todos consumindo a mesma fila no Redis. Antes das réplicas subirem, um container `setup` roda as migrations e cria Alice, Bob e `ACCOUNTS` contas de carga (padrão 10000, com R$ 10.000 cada). Quando o nginx responde, o k6 dispara `RATE` transferências/s (padrão 1000) entre pares aleatórios durante 1 min. No fim tudo é derrubado, inclusive os volumes.
 
-Cada réplica abre até 33 conexões com o Postgres, por isso o `max_connections` dele sobe para 200 nesse ambiente. Para comparar escala horizontal, rode com `API_REPLICAS=1` e depois com `3`: o tráfego passa pelo nginx nos dois casos, então só o número de réplicas muda.
+Cada réplica da API e cada worker abre até 33 conexões com o Postgres, por isso o `max_connections` dele sobe para 200 nesse ambiente (dá para até 6 processos no total). Para comparar escala horizontal, rode com `API_REPLICAS=1` e depois com `3`: o tráfego passa pelo nginx nos dois casos, então só o número de réplicas muda.
 
 O resumo mostra p90, p95 e p99. Só falha por dois motivos: a API não sustentar `RATE` requisições/s (tolerância de 1%) ou o p99 passar de 300 ms. O p99 mede até o `202` do POST, não o processamento pelo worker. Para isso, 2 transferências/s são rastreadas até o `job.status` sair de `pending`: `transfer_completion_time` mostra quanto o dinheiro demora para chegar e `transfer_completion_timeouts` conta as que não terminaram em 110 s (só informativas, não reprovam).
 

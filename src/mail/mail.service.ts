@@ -1,11 +1,8 @@
 import { InjectQueue } from '@nestjs/bullmq';
-import { Inject, Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { Injectable, Logger } from '@nestjs/common';
 import { Queue } from 'bullmq';
-import type { Transporter } from 'nodemailer';
 import { EntityManager } from 'typeorm';
 import { Account } from '../accounts/account.entity.js';
-import { EnvironmentVariables } from '../config/env.validation.js';
 import { Transfer } from '../transfers/transfer.entity.js';
 import { Email } from './email.entity.js';
 import {
@@ -13,7 +10,6 @@ import {
   SEND_EMAIL_JOB,
   SendEmailJobData,
 } from './email.queue.js';
-import { MAIL_TRANSPORTER } from './mail.transporter.js';
 
 const brl = new Intl.NumberFormat('pt-BR', {
   style: 'currency',
@@ -25,8 +21,6 @@ export class MailService {
   private readonly logger = new Logger(MailService.name);
 
   constructor(
-    @Inject(MAIL_TRANSPORTER) private readonly transporter: Transporter,
-    private readonly config: ConfigService<EnvironmentVariables, true>,
     @InjectQueue(EMAIL_QUEUE)
     private readonly queue: Queue<SendEmailJobData>,
   ) {}
@@ -68,14 +62,5 @@ export class MailService {
         `Failed to queue emails ${emailIds.join(', ')}: ${String(error)}`,
       );
     }
-  }
-
-  async send({ recipient, subject, text }: Email) {
-    await this.transporter.sendMail({
-      from: this.config.get('MAIL_FROM', { infer: true }),
-      to: recipient,
-      subject,
-      text,
-    });
   }
 }

@@ -1,11 +1,8 @@
 import { Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { Queue } from 'bullmq';
-import type { Transporter } from 'nodemailer';
 import { EntityManager } from 'typeorm';
 import { describe, expect, it, vi } from 'vitest';
 import { Account } from '../accounts/account.entity.js';
-import { EnvironmentVariables } from '../config/env.validation.js';
 import { Transfer } from '../transfers/transfer.entity.js';
 import { Email } from './email.entity.js';
 import { MailService } from './mail.service.js';
@@ -31,20 +28,14 @@ const transfer: Transfer = {
 };
 
 function setup() {
-  const transporter = { sendMail: vi.fn().mockResolvedValue({}) };
-  const config = { get: vi.fn().mockReturnValue('POC Bank <no-reply@test>') };
   const queue = { addBulk: vi.fn().mockResolvedValue([]) };
   const manager = {
     insert: vi.fn().mockResolvedValue({
       identifiers: [{ id: 'email-1' }, { id: 'email-2' }],
     }),
   };
-  const mail = new MailService(
-    transporter as unknown as Transporter,
-    config as unknown as ConfigService<EnvironmentVariables, true>,
-    queue as unknown as Queue,
-  );
-  return { mail, transporter, config, queue, manager };
+  const mail = new MailService(queue as unknown as Queue);
+  return { mail, queue, manager };
 }
 
 describe('MailService', () => {
@@ -104,35 +95,6 @@ describe('MailService', () => {
 
       await expect(mail.enqueue(['email-1'])).resolves.toBeUndefined();
       expect(logError).toHaveBeenCalledWith(expect.stringContaining('email-1'));
-    });
-  });
-
-  describe('send', () => {
-    it('sends the email from the configured address', async () => {
-      const { mail, transporter, config } = setup();
-
-      await mail.send({
-        recipient: 'alice@example.com',
-        subject: 'Assunto',
-        text: 'Texto',
-      } as Email);
-
-      expect(config.get).toHaveBeenCalledWith('MAIL_FROM', { infer: true });
-      expect(transporter.sendMail).toHaveBeenCalledWith({
-        from: 'POC Bank <no-reply@test>',
-        to: 'alice@example.com',
-        subject: 'Assunto',
-        text: 'Texto',
-      });
-    });
-
-    it('throws when the SMTP server fails, so the job is retried', async () => {
-      const { mail, transporter } = setup();
-      transporter.sendMail.mockRejectedValue(new Error('SMTP down'));
-
-      await expect(
-        mail.send({ recipient: 'alice@example.com' } as Email),
-      ).rejects.toThrow('SMTP down');
     });
   });
 });

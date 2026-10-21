@@ -10,7 +10,7 @@ import {
   it,
   vi,
 } from 'vitest';
-import { AppModule } from '../src/app.module.js';
+import { ApiModule } from '../src/api.module.js';
 import { configureApp } from '../src/app.setup.js';
 import { getQueueToken } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
@@ -20,6 +20,7 @@ import { EMAIL_QUEUE } from '../src/mail/email.queue.js';
 import { MailService } from '../src/mail/mail.service.js';
 import { MAIL_TRANSPORTER } from '../src/mail/mail.transporter.js';
 import { resetDatabase } from '../src/seed.js';
+import { WorkerModule } from '../src/worker.module.js';
 import { Transfer } from '../src/transfers/transfer.entity.js';
 
 const alice = '11111111-1111-4111-8111-111111111111';
@@ -33,7 +34,9 @@ let emailQueue: Queue;
 let baseUrl: string;
 
 beforeAll(async () => {
-  const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
+  const moduleRef = await Test.createTestingModule({
+    imports: [ApiModule, WorkerModule],
+  })
     .overrideProvider(MAIL_TRANSPORTER)
     .useValue(transporter)
     .compile();
@@ -44,7 +47,6 @@ beforeAll(async () => {
   baseUrl = `${await app.getUrl()}/api`;
   dataSource = app.get(DataSource);
   emailQueue = app.get(getQueueToken(EMAIL_QUEUE));
-  await app.get(EmailProcessor).start();
 });
 
 beforeEach(async () => {

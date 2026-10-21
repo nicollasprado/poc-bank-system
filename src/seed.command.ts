@@ -3,7 +3,7 @@ import { NestFactory } from '@nestjs/core';
 import { createInterface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { DataSource } from 'typeorm';
-import { AppModule } from './app.module.js';
+import { CoreModule } from './core.module.js';
 import { EnvironmentVariables } from './config/env.validation.js';
 import { resetDatabase } from './seed.js';
 
@@ -23,7 +23,7 @@ async function seed() {
   });
   const loadAccounts = Number(values['load-accounts']);
 
-  const app = await NestFactory.createApplicationContext(AppModule, {
+  const app = await NestFactory.createApplicationContext(CoreModule, {
     logger: ['error', 'warn'],
   });
   const config =
