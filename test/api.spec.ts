@@ -249,11 +249,23 @@ describe('POST /api/transfer', () => {
     expect(response.status).toBe(400);
   });
 
-  it('returns 404 when the recipient does not exist', async () => {
+  it('returns 404 and rolls back the debit when the recipient does not exist', async () => {
     const response = await transfer(alice, stranger, 1_000);
 
     expect(response.status).toBe(404);
+    expect(response.body.message).toBe('Recipient account not found');
     expect(await balanceOf(alice)).toBe(100_000);
+    expect(await countTransfers()).toBe(0);
+    expect(await emails()).toEqual([]);
+  });
+
+  it('returns 404 when the sender does not exist', async () => {
+    const response = await transfer(stranger, alice, 1_000);
+
+    expect(response.status).toBe(404);
+    expect(response.body.message).toBe('Account not found');
+    expect(await balanceOf(alice)).toBe(100_000);
+    expect(await countTransfers()).toBe(0);
   });
 
   it('never overdraws with concurrent transfers', async () => {

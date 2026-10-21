@@ -28,8 +28,8 @@ export class MailService {
   async notifyTransfer(
     manager: EntityManager,
     transfer: Transfer,
-    from: Account,
-    to: Account,
+    from: Pick<Account, 'name' | 'email'>,
+    to: Pick<Account, 'name' | 'email'>,
   ): Promise<string[]> {
     const value = brl.format(transfer.amount / 100);
 
