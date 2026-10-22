@@ -99,6 +99,14 @@ function emails() {
   return dataSource.getRepository(Email).find({ order: { recipient: 'ASC' } });
 }
 
+describe('GET /api/health', () => {
+  it('answers without the x-account-id header', async () => {
+    const response = await get('/health');
+
+    expect(response).toEqual({ status: 200, body: { status: 'ok' } });
+  });
+});
+
 describe('GET /api/balance', () => {
   it('returns the balance of the account in the header', async () => {
     const response = await get('/balance', alice);

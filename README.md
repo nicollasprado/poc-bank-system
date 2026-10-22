@@ -46,6 +46,14 @@ curl localhost:3000/api/transfer/<id> -H 'x-account-id: 11111111-1111-4111-8111-
 
 `200` se existe e você é o remetente ou o destinatário · `404` caso contrário
 
+### `GET /api/health`: health check
+
+```bash
+curl localhost:3000/api/health
+```
+
+`200` com `{"status":"ok"}`, sem precisar do `x-account-id`. É a rota para o health check de load balancers (o do ALB não envia headers personalizados). Só diz que o processo está de pé e atendendo HTTP: não consulta o banco, para que uma queda do Postgres não tire todas as instâncias do balanceador de uma vez.
+
 ### `GET /api/balance`: saldo da conta
 
 ```bash
