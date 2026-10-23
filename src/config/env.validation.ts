@@ -23,6 +23,13 @@ export class EnvironmentVariables {
   })
   DATABASE_URL: string;
 
+  @IsUrl({
+    protocols: ['redis', 'rediss'],
+    require_protocol: true,
+    require_tld: false,
+  })
+  REDIS_URL: string;
+
   @IsString()
   @IsNotEmpty()
   SMTP_HOST: string;

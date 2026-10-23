@@ -3,7 +3,7 @@ import { NestFactory } from '@nestjs/core';
 import { createInterface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { DataSource } from 'typeorm';
-import { AppModule } from './app.module.js';
+import { CoreModule } from './core.module.js';
 import { EnvironmentVariables } from './config/env.validation.js';
 import { resetDatabase } from './seed.js';
 
@@ -16,20 +16,25 @@ async function confirm(question: string) {
 
 async function seed() {
   const { values } = parseArgs({
-    options: { 'load-accounts': { type: 'string', default: '0' } },
+    options: {
+      'load-accounts': { type: 'string', default: '0' },
+      yes: { type: 'boolean', default: false },
+    },
   });
   const loadAccounts = Number(values['load-accounts']);
 
-  const app = await NestFactory.createApplicationContext(AppModule, {
+  const app = await NestFactory.createApplicationContext(CoreModule, {
     logger: ['error', 'warn'],
   });
   const config =
     app.get<ConfigService<EnvironmentVariables, true>>(ConfigService);
   const db = new URL(config.get('DATABASE_URL', { infer: true }));
 
-  const confirmed = await confirm(
-    `This will DELETE ALL DATA in database "${db.pathname.slice(1)}" at ${db.host} and create the demo accounts. Continue? (y/N) `,
-  );
+  const confirmed =
+    values.yes ||
+    (await confirm(
+      `This will DELETE ALL DATA in database "${db.pathname.slice(1)}" at ${db.host} and create the demo accounts. Continue? (y/N) `,
+    ));
   if (confirmed) {
     await resetDatabase(app.get(DataSource), loadAccounts);
     console.log(

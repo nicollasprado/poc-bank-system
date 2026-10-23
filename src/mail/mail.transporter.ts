@@ -10,6 +10,7 @@ export const mailTransporterProvider: FactoryProvider<Transporter> = {
   inject: [ConfigService],
   useFactory: (config: ConfigService<EnvironmentVariables, true>) =>
     createTransport({
+      pool: true,
       host: config.get('SMTP_HOST', { infer: true }),
       port: config.get('SMTP_PORT', { infer: true }),
     }),
