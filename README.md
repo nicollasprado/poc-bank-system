@@ -114,6 +114,19 @@ O `test:load` mede desde o primeiro segundo, com tudo frio: o Node ainda compila
 
 O resumo mostra p90, p95 e p99. Só falha por dois motivos: a API não sustentar `RATE` requisições/s (tolerância de 1%) ou o p99 passar de 300 ms. O p99 mede até o `202` do POST, não o processamento pelo worker. Para isso, 2 transferências/s são rastreadas até o `job.status` sair de `pending`: `transfer_completion_time` mostra quanto o dinheiro demora para chegar e `transfer_completion_timeouts` conta as que não terminaram em 110 s (só informativas, não reprovam).
 
+## Deploy (AWS)
+
+Cada push na `main` roda os testes, publica a imagem `nicollasprado/poc-bank-system:<sha curto>` no Docker Hub e faz o deploy nas EC2 pelo CodeDeploy, uma instância por vez (`deploy/appspec.yml`). Em cada instância, o `deploy/scripts/start.sh` baixa a imagem nova, roda as migrations e sobe a API (porta 3000) e o worker; o `validate.sh` só libera a instância de volta para o load balancer quando `/api/health` responde.
+
+Como as instâncias são atualizadas uma de cada vez, a versão nova roda junto com a antiga por alguns instantes: migrations precisam ser compatíveis com a versão anterior (adicionar coluna é seguro; renomear ou apagar, não).
+
+Configuração única:
+
+- **Em cada EC2:** Docker e o agente do CodeDeploy instalados, uma instance role com `s3:GetObject` no bucket das revisões, e o arquivo `/etc/poc-bank/app.env` com as variáveis da API (`PORT=3000`, `DATABASE_URL`, `REDIS_URL`, `SMTP_HOST`, `SMTP_PORT`, `MAIL_FROM`). Com RDS exigindo SSL, coloque o certificado da AWS em `/etc/poc-bank/global-bundle.pem` e use `sslrootcert=./global-bundle.pem` na `DATABASE_URL`.
+- **No GitHub, secrets:** `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`, `AWS_ACCESS_KEY_ID` e `AWS_SECRET_ACCESS_KEY`.
+- **No GitHub, variables:** `AWS_REGION`, `DEPLOY_BUCKET`, `CODEDEPLOY_APPLICATION` e `CODEDEPLOY_DEPLOYMENT_GROUP`.
+- **Usuário IAM do deploy:** só com chave de acesso, sem console, e uma policy com `s3:PutObject` na pasta `poc-bank-system/` do bucket e `codedeploy:CreateDeployment`, `GetDeployment`, `GetDeploymentConfig`, `RegisterApplicationRevision` e `GetApplicationRevision` na aplicação e no deployment group.
+
 ## Postman
 
 Importe `postman/poc-bank-system.postman_collection.json` no Postman (*Import*). URL base e IDs das contas já vêm como variáveis da coleção. Rode `npm run seed` antes e use o *Run collection* para executar tudo em ordem, com verificações em cada requisição.
